@@ -6,7 +6,6 @@ node_modules/
 
 # Credentials and tokens
 config/google-token.json
-clarity-cookies.json
 *.json.bak
 
 # Output files
