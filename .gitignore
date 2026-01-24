@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+
+# Credentials and tokens
+config/google-token.json
+clarity-cookies.json
+*.json.bak
+
+# Output files
+recordings/
+*.webm
+*.mp4
+
+# Debug files
+clarity-auth-failed.png
+clarity-load-error.png
+*-screenshot.png
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

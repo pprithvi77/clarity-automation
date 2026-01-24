@@ -1,0 +1,32 @@
+{
+  "name": "clarity-recording-automation",
+  "version": "1.0.0",
+  "description": "Automate Microsoft Clarity session recording downloads using headless browser with Google Drive storage",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "server": "node src/server.js",
+    "test:clarity": "node scripts/test-clarity-api.js",
+    "test:browserless": "node scripts/test-browserless.js",
+    "auth:google": "node scripts/auth-google.js",
+    "capture:single": "node src/capture-single.js",
+    "capture:batch": "node src/capture-batch.js"
+  },
+  "keywords": [
+    "microsoft-clarity",
+    "session-recording",
+    "browserless",
+    "automation",
+    "screen-capture"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "express": "^5.2.1",
+    "googleapis": "^130.0.0",
+    "p-limit": "^5.0.0",
+    "puppeteer-core": "^21.6.0"
+  }
+}

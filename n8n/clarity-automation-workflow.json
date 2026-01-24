@@ -1,0 +1,720 @@
+{
+  "name": "Clarity Recording Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Form Responses 1",
+          "mode": "list"
+        },
+        "event": "rowAdded"
+      },
+      "id": "trigger-sheets",
+      "name": "New Form Submission",
+      "type": "n8n-nodes-base.googleSheetsTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"rowNumber\": {{ $json.row_number }},\n  \"customerName\": \"{{ $json['Customer Name'] }}\",\n  \"email\": \"{{ $json['Email Address'] }}\",\n  \"clarityToken\": \"{{ $json['Clarity API Token'] }}\",\n  \"projectId\": \"{{ $json['Clarity Project ID'] }}\",\n  \"clarityCookies\": {{ $json['Clarity Cookies'] || 'null' }},\n  \"downloadType\": \"{{ $json['Download Type'] }}\",\n  \"startDate\": \"{{ $json['Start Date'] || '' }}\",\n  \"endDate\": \"{{ $json['End Date'] || '' }}\",\n  \"sessionIds\": \"{{ $json['Session IDs'] || '' }}\",\n  \"maxRecordings\": {{ $json['Max Recordings'] || 50 }},\n  \"outputFormat\": \"{{ $json['Output Format'] || 'WebM' }}\",\n  \"deliveryMethod\": \"{{ $json['Delivery Method'] || 'Google Drive Link' }}\"\n}",
+        "options": {}
+      },
+      "id": "parse-form",
+      "name": "Parse Form Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cookie-check",
+              "leftValue": "={{ $json.clarityCookies }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-cookies",
+      "name": "Cookies Provided?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:3001/cookies/check",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"clarityCookies\": {{ $json.clarityCookies }},\n  \"slackWebhookUrl\": \"{{ $env.SLACK_WEBHOOK_URL || '' }}\",\n  \"notifyIfExpiringSoon\": true,\n  \"thresholdDays\": 7,\n  \"projectName\": \"{{ $json.projectId }}\",\n  \"customerName\": \"{{ $json.customerName }}\"\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "validate-cookies",
+      "name": "Validate Cookie Expiry",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "expired-check",
+              "leftValue": "={{ $json.expired }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-expired",
+      "name": "Cookies Expired?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 200]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Form Responses 1",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Status": "Failed: Cookies expired - please export fresh cookies from Clarity"
+          },
+          "matchingColumns": ["row_number"]
+        }
+      },
+      "id": "update-cookie-expired",
+      "name": "Update Status - Cookie Expired",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.3,
+      "position": [1340, 100],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Parse Form Data').item.json.email }}",
+        "subject": "=Action Required: Clarity Cookies Expired - {{ $('Parse Form Data').item.json.customerName }}",
+        "emailType": "text",
+        "message": "=Hello {{ $('Parse Form Data').item.json.customerName }},\n\nYour Clarity recording request could not be processed because your authentication cookies have expired.\n\nTo fix this:\n1. Log into Microsoft Clarity in your browser\n2. Export your cookies using EditThisCookie or a similar extension\n3. Submit a new request with the fresh cookies\n\nCookie expiry details:\n- Expired: {{ $json.expiresAtFormatted || 'Unknown' }}\n- Auth cookie: {{ $json.authCookie || 'Not found' }}\n\nPlease export new cookies and try again.\n\n---\nClarity Recording Automation"
+      },
+      "id": "send-cookie-expired-email",
+      "name": "Send Cookie Expired Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1560, 100],
+      "credentials": {
+        "smtp": {
+          "id": "YOUR_SMTP_CREDENTIAL_ID",
+          "name": "SMTP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Form Responses 1",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Status": "Failed: Clarity cookies required - see documentation"
+          },
+          "matchingColumns": ["row_number"]
+        }
+      },
+      "id": "update-no-cookies",
+      "name": "Update Status - No Cookies",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.3,
+      "position": [900, 400],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Parse Form Data').item.json.email }}",
+        "subject": "=Action Required: Clarity Cookies Missing - {{ $('Parse Form Data').item.json.customerName }}",
+        "emailType": "text",
+        "message": "=Hello {{ $('Parse Form Data').item.json.customerName }},\n\nYour Clarity recording request could not be processed because authentication cookies were not provided.\n\nIMPORTANT: Clarity session recordings require browser cookies for authentication.\n\nTo get your cookies:\n1. Install 'EditThisCookie' browser extension\n2. Log into Microsoft Clarity\n3. Click the EditThisCookie icon and export as JSON\n4. Paste the JSON into the 'Clarity Cookies' field in the form\n\nPlease submit a new request with your cookies.\n\n---\nClarity Recording Automation"
+      },
+      "id": "send-no-cookies-email",
+      "name": "Send No Cookies Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1120, 400],
+      "credentials": {
+        "smtp": {
+          "id": "YOUR_SMTP_CREDENTIAL_ID",
+          "name": "SMTP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Form Responses 1",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Status": "=Processing (cookies valid for {{ $json.daysRemaining }} more days)"
+          },
+          "matchingColumns": ["row_number"]
+        }
+      },
+      "id": "update-processing",
+      "name": "Update Status - Processing",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.3,
+      "position": [1340, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://clarity.microsoft.com/mcp/recordings/sample",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Parse Form Data').item.json.clarityToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"sortBy\": 0,\n  \"start\": \"{{ $('Parse Form Data').item.json.startDate || $today.minus({days: 7}).toISO() }}\",\n  \"end\": \"{{ $('Parse Form Data').item.json.endDate || $today.toISO() }}\",\n  \"count\": {{ $('Parse Form Data').item.json.maxRecordings }}\n}",
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "id": "fetch-recordings",
+      "name": "Fetch Clarity Recordings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "session-filter",
+              "leftValue": "={{ $('Parse Form Data').item.json.sessionIds }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-session-filter",
+      "name": "Has Session Filter?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filter recordings by specific session IDs\nconst sessionIds = $('Parse Form Data').item.json.sessionIds\n  .split(',')\n  .map(id => id.trim().toLowerCase());\n\nconst recordings = $input.all();\nconst filtered = recordings.filter(item => {\n  const link = item.json.link || '';\n  return sessionIds.some(id => link.toLowerCase().includes(id));\n});\n\nreturn filtered;"
+      },
+      "id": "filter-sessions",
+      "name": "Filter by Session IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 200]
+    },
+    {
+      "parameters": {
+        "batchSize": 3,
+        "options": {}
+      },
+      "id": "batch-recordings",
+      "name": "Process in Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [2220, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:3001/capture",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"url\": \"{{ $json.link }}\",\n  \"clarityToken\": \"{{ $('Parse Form Data').item.json.clarityToken }}\",\n  \"projectId\": \"{{ $('Parse Form Data').item.json.projectId }}\",\n  \"clarityCookies\": {{ $('Parse Form Data').item.json.clarityCookies }},\n  \"slackWebhookUrl\": \"{{ $env.SLACK_WEBHOOK_URL || '' }}\",\n  \"uploadToGdrive\": true\n}",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "capture-recording",
+      "name": "Capture Recording",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2440, 300]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "capturedRecordings",
+        "options": {}
+      },
+      "id": "aggregate-results",
+      "name": "Collect All Results",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [2660, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Form Responses 1",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Status": "Complete",
+            "Result Link": "={{ $json.capturedRecordings.map(r => r.webViewLink || r.path).join(', ') }}"
+          },
+          "matchingColumns": ["row_number"]
+        }
+      },
+      "id": "update-complete",
+      "name": "Update Status - Complete",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.3,
+      "position": [2880, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Parse Form Data').item.json.email }}",
+        "subject": "=Clarity Recordings Ready - {{ $('Parse Form Data').item.json.customerName }}",
+        "emailType": "text",
+        "message": "=Hello {{ $('Parse Form Data').item.json.customerName }},\n\nYour Clarity recording download request has been completed.\n\nRecordings processed: {{ $json.capturedRecordings.length }}\n\nAccess your recordings:\n{{ $json.capturedRecordings.map((r, i) => `${i + 1}. ${r.webViewLink || r.path}`).join('\\n') }}\n\nThank you for using our service!\n\n---\nClarity Recording Automation"
+      },
+      "id": "send-email",
+      "name": "Send Completion Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [3100, 300],
+      "credentials": {
+        "smtp": {
+          "id": "YOUR_SMTP_CREDENTIAL_ID",
+          "name": "SMTP"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "On Error",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [240, 600]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Form Responses 1",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Status": "=Failed: {{ $json.error.message }}"
+          },
+          "matchingColumns": ["row_number"]
+        }
+      },
+      "id": "update-failed",
+      "name": "Update Status - Failed",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.3,
+      "position": [460, 600],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Parse Form Data').item.json.email }}",
+        "subject": "=Clarity Recording Request Failed - {{ $('Parse Form Data').item.json.customerName }}",
+        "emailType": "text",
+        "message": "=Hello {{ $('Parse Form Data').item.json.customerName }},\n\nUnfortunately, your Clarity recording download request encountered an error.\n\nError: {{ $json.error.message }}\n\nPlease verify your Clarity API token, Project ID, and cookies are correct, then try submitting again.\n\nIf the problem persists, please contact support.\n\n---\nClarity Recording Automation"
+      },
+      "id": "send-error-email",
+      "name": "Send Error Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [680, 600],
+      "credentials": {
+        "smtp": {
+          "id": "YOUR_SMTP_CREDENTIAL_ID",
+          "name": "SMTP"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "New Form Submission": {
+      "main": [
+        [
+          {
+            "node": "Parse Form Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Form Data": {
+      "main": [
+        [
+          {
+            "node": "Cookies Provided?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cookies Provided?": {
+      "main": [
+        [
+          {
+            "node": "Validate Cookie Expiry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Status - No Cookies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Status - No Cookies": {
+      "main": [
+        [
+          {
+            "node": "Send No Cookies Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Cookie Expiry": {
+      "main": [
+        [
+          {
+            "node": "Cookies Expired?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cookies Expired?": {
+      "main": [
+        [
+          {
+            "node": "Update Status - Cookie Expired",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Status - Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Status - Cookie Expired": {
+      "main": [
+        [
+          {
+            "node": "Send Cookie Expired Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Status - Processing": {
+      "main": [
+        [
+          {
+            "node": "Fetch Clarity Recordings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Clarity Recordings": {
+      "main": [
+        [
+          {
+            "node": "Has Session Filter?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Session Filter?": {
+      "main": [
+        [
+          {
+            "node": "Filter by Session IDs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Process in Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter by Session IDs": {
+      "main": [
+        [
+          {
+            "node": "Process in Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process in Batches": {
+      "main": [
+        [
+          {
+            "node": "Capture Recording",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Collect All Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Capture Recording": {
+      "main": [
+        [
+          {
+            "node": "Process in Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect All Results": {
+      "main": [
+        [
+          {
+            "node": "Update Status - Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Status - Complete": {
+      "main": [
+        [
+          {
+            "node": "Send Completion Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "On Error": {
+      "main": [
+        [
+          {
+            "node": "Update Status - Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Status - Failed": {
+      "main": [
+        [
+          {
+            "node": "Send Error Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "clarity",
+      "createdAt": "2026-01-19T00:00:00.000Z",
+      "updatedAt": "2026-01-19T00:00:00.000Z"
+    },
+    {
+      "name": "automation",
+      "createdAt": "2026-01-19T00:00:00.000Z",
+      "updatedAt": "2026-01-19T00:00:00.000Z"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2026-01-20T00:00:00.000Z",
+  "versionId": "2"
+}
